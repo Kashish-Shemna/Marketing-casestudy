@@ -20,10 +20,11 @@ clf_model = artifacts["classification_model"]
 class_feature_names = artifacts["class_feature_names"]
 
 cluster_model = artifacts["cluster_model"]
+cluster_feature_names = artifacts["cluster_feature_names"]
 cluster_summary = artifacts["cluster_summary"]
 
 # infer cluster label column name (e.g. 'cluster_label')
-cluster_label_col = cluster_summary.columns[0]  # first column is the cluster id
+cluster_label_col = cluster_summary.columns[0]  # first column is cluster id
 
 # ----------------- STREAMLIT UI -----------------
 st.title("📊 Response Prediction & Cluster Highlight Dashboard")
@@ -37,31 +38,33 @@ st.write(
     """
 )
 
-st.subheader("Model Inputs")
+st.subheader("Enter Feature Values")
 
-# We assume there are exactly 2 numeric features in class_feature_names
-feat1_name = class_feature_names[0]
-feat2_name = class_feature_names[1]
+# We'll take inputs for ALL features used in either model
+all_features = sorted(set(class_feature_names) | set(cluster_feature_names))
 
-feat1_value = st.number_input(f"{feat1_name}", value=0.0)
-feat2_value = st.number_input(f"{feat2_name}", value=0.0)
+user_inputs = {}
+for feat in all_features:
+    # Numeric inputs (you can later customize based on feature type if needed)
+    user_inputs[feat] = st.number_input(feat, value=0.0)
 
 if st.button("Predict & Show Cluster Insights"):
     # ------------- PREPARE INPUT FOR CLASSIFICATION -------------
-    input_df = pd.DataFrame([[feat1_value, feat2_value]],
-                            columns=class_feature_names)
+    class_input_row = [user_inputs[feat] for feat in class_feature_names]
+    class_input_df = pd.DataFrame([class_input_row], columns=class_feature_names)
 
     # add constant term for statsmodels
-    input_df_const = sm.add_constant(input_df, has_constant="add")
+    class_input_df_const = sm.add_constant(class_input_df, has_constant="add")
 
     # predicted probability of response = 1 (Yes)
-    prob_yes = float(clf_model.predict(input_df_const)[0])
+    prob_yes = float(clf_model.predict(class_input_df_const)[0])
     pred_label = 1 if prob_yes >= 0.5 else 0
 
     # ------------- PREPARE INPUT FOR CLUSTERING -------------
-    # here we assume clustering was done on the same two features
-    cluster_input = input_df.values  # shape (1, 2)
-    cluster_id = int(cluster_model.predict(cluster_input)[0])
+    cluster_input_row = [user_inputs[feat] for feat in cluster_feature_names]
+    cluster_input_df = pd.DataFrame([cluster_input_row], columns=cluster_feature_names)
+
+    cluster_id = int(cluster_model.predict(cluster_input_df.values)[0])
 
     # get this cluster's summary row
     row = cluster_summary[cluster_summary[cluster_label_col] == cluster_id]
