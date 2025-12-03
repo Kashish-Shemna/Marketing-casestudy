@@ -151,17 +151,24 @@ def map_yes_no(choice: str) -> int:
 # ----------------- PREDICTION -----------------
 
 if st.button("🔍 Analyse Customer"):
-    # 1️⃣ Numeric raw values for the scaler features
-    #    These names MUST match scaler_feature_names = ['Income', 'Total_Expenditure_2yrs', 'Customer tenure(days)']
-    numeric_raw = {
-        "Income": map_income(income_choice),
-        "Total_Expenditure_2yrs": map_expenditure(exp_choice),
-        "Customer tenure(days)": float(tenure),
-    }
+    # 1️⃣ Build numeric row directly based on the scaler feature names
+    #    This avoids KeyErrors even if exact names differ slightly
+    numeric_row = []
+    for feat in scaler_feature_names:
+        f = feat.lower()
+        if "income" in f:
+            value = map_income(income_choice)
+        elif "expenditure" in f or "exp" in f:
+            value = map_expenditure(exp_choice)
+        elif "tenure" in f:
+            value = float(tenure)
+        else:
+            # fallback if some unexpected column is present
+            value = 0.0
+        numeric_row.append(value)
 
-    # Build DataFrame exactly in the order expected by scaler
-    numeric_row = [numeric_raw[feat] for feat in scaler_feature_names]
     numeric_df = pd.DataFrame([numeric_row], columns=scaler_feature_names)
+
 
     # 2️⃣ Scale numeric features
     scaled_array = scaler.transform(numeric_df.values)
