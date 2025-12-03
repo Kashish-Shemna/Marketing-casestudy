@@ -30,7 +30,7 @@ cluster_feature_names = artifacts["cluster_feature_names"]
 cluster_summary = artifacts["cluster_summary"]         # cluster_profiles
 
 scaler = artifacts["scaler"]                           # min_max_scaler
-raw_feature_names = artifacts["raw_feature_names"]     # columns used for scaler
+scaler_feature_names = artifacts["raw_feature_names"]  # ['Income', 'Total_Expenditure_2yrs', 'Customer tenure(days)']
 
 cluster_label_col = cluster_summary.columns[0]         # first column = cluster id
 
@@ -69,7 +69,7 @@ st.markdown(
 
 st.write("---")
 
-# ----------------- INPUT UI (DROPDOWNS) -----------------
+# ----------------- INPUT UI -----------------
 
 col1, col2 = st.columns(2)
 
@@ -99,16 +99,23 @@ with col2:
         ],
     )
 
+tenure = st.number_input(
+    "3. Customer tenure (days)",
+    min_value=0,
+    value=365,
+    help="Number of days the customer has been with the company."
+)
+
 col3, col4, col5 = st.columns(3)
 
 with col3:
-    edu_choice = st.selectbox("3. Education (PhD)", ["No", "Yes"])
+    edu_choice = st.selectbox("4. Education (PhD)", ["No", "Yes"])
 
 with col4:
-    child_choice = st.selectbox("4. Children at home", ["No", "Yes"])
+    child_choice = st.selectbox("5. Children at home", ["No", "Yes"])
 
 with col5:
-    prev_choice = st.selectbox("5. Previous campaign response", ["No", "Yes"])
+    prev_choice = st.selectbox("6. Previous campaign response", ["No", "Yes"])
 
 
 # ----------------- MAPPING FUNCTIONS -----------------
@@ -144,39 +151,56 @@ def map_yes_no(choice: str) -> int:
 # ----------------- PREDICTION -----------------
 
 if st.button("🔍 Analyse Customer"):
-    # 1️⃣ Convert dropdown choices → raw numeric values
-    # ⚠️ These keys MUST match the names in raw_feature_names used while fitting min_max_scaler
-    raw_input = {
+    # 1️⃣ Numeric raw values for the scaler features
+    #    These names MUST match scaler_feature_names = ['Income', 'Total_Expenditure_2yrs', 'Customer tenure(days)']
+    numeric_raw = {
         "Income": map_income(income_choice),
-        "Total_Exp_2years": map_expenditure(exp_choice),
-        "Education_Phd": map_yes_no(edu_choice),
+        "Total_Expenditure_2yrs": map_expenditure(exp_choice),
+        "Customer tenure(days)": float(tenure),
+    }
+
+    # Build DataFrame exactly in the order expected by scaler
+    numeric_row = [numeric_raw[feat] for feat in scaler_feature_names]
+    numeric_df = pd.DataFrame([numeric_row], columns=scaler_feature_names)
+
+    # 2️⃣ Scale numeric features
+    scaled_array = scaler.transform(numeric_df.values)
+    scaled_numeric_df = pd.DataFrame(scaled_array, columns=scaler_feature_names)
+
+    # 3️⃣ Binary features (column names must match your model)
+    #    🔁 If your column names are slightly different, edit the keys below
+    binary_values = {
+        "Education_PhD": map_yes_no(edu_choice),
         "Children_at_home": map_yes_no(child_choice),
         "Prev_Campaign_Response": map_yes_no(prev_choice),
     }
 
-    # DataFrame in exact order expected by scaler
-    raw_df = pd.DataFrame(
-        [[raw_input[col] for col in raw_feature_names]],
-        columns=raw_feature_names
-    )
+    # 4️⃣ Build full model input row with all class_feature_names
+    model_row = {}
+    for feat in class_feature_names:
+        if feat in scaled_numeric_df.columns:
+            # use scaled numeric value
+            model_row[feat] = scaled_numeric_df[feat].iloc[0]
+        elif feat in binary_values:
+            # use binary value from dropdown
+            model_row[feat] = binary_values[feat]
+        else:
+            # default 0 if some other feature exists in model
+            model_row[feat] = 0.0
 
-    # 2️⃣ Scale using saved scaler (hidden from user)
-    #    Use .values so sklearn doesn't check DataFrame column names
-    scaled_array = scaler.transform(raw_df.values)
-    scaled_df = pd.DataFrame(scaled_array, columns=raw_feature_names)
-
-    # 3️⃣ Classification model input
-    X_class = scaled_df[class_feature_names]
+    X_class = pd.DataFrame([[model_row[feat] for feat in class_feature_names]],
+                           columns=class_feature_names)
     X_class_const = sm.add_constant(X_class, has_constant="add")
 
     prob_yes = float(clf_model.predict(X_class_const)[0])
     pred_label = 1 if prob_yes >= 0.5 else 0
 
-    # 4️⃣ Clustering model input
-    X_cluster = scaled_df[cluster_feature_names]
+    # 5️⃣ Clustering input using cluster_feature_names
+    cluster_row = [model_row[feat] for feat in cluster_feature_names]
+    X_cluster = pd.DataFrame([cluster_row], columns=cluster_feature_names)
     cluster_id = int(cluster_model.predict(X_cluster.values)[0])
 
-    # 5️⃣ Look up cluster behaviour
+    # 6️⃣ Look up cluster behaviour
     row = cluster_summary[cluster_summary[cluster_label_col] == cluster_id]
 
     if row.empty:
@@ -228,6 +252,5 @@ if st.button("🔍 Analyse Customer"):
                     f"(historical response rate: **{yes_rate:.2f}**)."
                 )
 
-        # Full cluster table
         with st.expander("📊 See all clusters and their response behaviour"):
             st.dataframe(cluster_summary)
