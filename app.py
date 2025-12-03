@@ -9,6 +9,7 @@ Original file is located at
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import pickle
 import statsmodels.api as sm
 
@@ -25,9 +26,9 @@ with open("model_with_clusters.pkl", "rb") as f:
 clf_model = artifacts["classification_model"]          # result_new12
 class_feature_names = artifacts["class_feature_names"]
 
-cluster_model = artifacts["cluster_model"]             # kmeans_model_2
+cluster_model = artifacts["cluster_model"]             # kmeans_model_2  (not used now for predict)
 cluster_feature_names = artifacts["cluster_feature_names"]
-cluster_summary = artifacts["cluster_summary"]         # cluster_profiles
+cluster_summary = artifacts["cluster_summary"]         # cluster_profiles_fixed
 
 scaler = artifacts["scaler"]                           # min_max_scaler
 scaler_feature_names = artifacts["raw_feature_names"]  # ['Income', 'Total_Expenditure_2yrs', 'Customer tenure(days)']
@@ -41,13 +42,7 @@ if "cluster_id" in cols:
 elif label_candidates:
     cluster_label_col = label_candidates[0]
 else:
-    # fallback: assume first column is cluster id
-    cluster_label_col = cols[0]
-
-# Optional debug: uncomment to see in the app UI
-# st.write("Cluster_summary columns:", cols)
-# st.write("Using cluster label column:", cluster_label_col)
-
+    cluster_label_col = cols[0]  # fallback
 
 # ----------------- STYLING -----------------
 st.markdown(
@@ -67,6 +62,12 @@ st.markdown(
         font-size: 15px;
         margin-top: 0;
         margin-bottom: 1rem;
+    }
+    .metric-card {
+        padding: 0.75rem 1rem;
+        border-radius: 0.75rem;
+        background-color: #fdfdfd;
+        border: 1px solid #e5e7eb;
     }
     </style>
     """,
@@ -166,8 +167,7 @@ def map_yes_no(choice: str) -> int:
 # ----------------- PREDICTION -----------------
 
 if st.button("🔍 Analyse Customer"):
-    # 1️⃣ Build numeric row directly based on the scaler feature names
-    #    This avoids KeyErrors even if exact names differ slightly
+    # 1️⃣ Build numeric row for scaler features (Income, Total_Expenditure_2yrs, Customer tenure(days))
     numeric_row = []
     for feat in scaler_feature_names:
         f = feat.lower()
@@ -178,21 +178,18 @@ if st.button("🔍 Analyse Customer"):
         elif "tenure" in f:
             value = float(tenure)
         else:
-            # fallback if some unexpected column is present
             value = 0.0
         numeric_row.append(value)
 
     numeric_df = pd.DataFrame([numeric_row], columns=scaler_feature_names)
 
-
     # 2️⃣ Scale numeric features
     scaled_array = scaler.transform(numeric_df.values)
     scaled_numeric_df = pd.DataFrame(scaled_array, columns=scaler_feature_names)
 
-    # 3️⃣ Binary features (column names must match your model)
-    #    🔁 If your column names are slightly different, edit the keys below
+    # 3️⃣ Binary features (names MUST match model’s columns)
     binary_values = {
-        "Education_PhD": map_yes_no(edu_choice),
+        "Education_Phd": map_yes_no(edu_choice),
         "Children_at_home": map_yes_no(child_choice),
         "Prev_Campaign_Response": map_yes_no(prev_choice),
     }
@@ -201,13 +198,10 @@ if st.button("🔍 Analyse Customer"):
     model_row = {}
     for feat in class_feature_names:
         if feat in scaled_numeric_df.columns:
-            # use scaled numeric value
             model_row[feat] = scaled_numeric_df[feat].iloc[0]
         elif feat in binary_values:
-            # use binary value from dropdown
             model_row[feat] = binary_values[feat]
         else:
-            # default 0 if some other feature exists in model
             model_row[feat] = 0.0
 
     X_class = pd.DataFrame([[model_row[feat] for feat in class_feature_names]],
@@ -217,64 +211,30 @@ if st.button("🔍 Analyse Customer"):
     prob_yes = float(clf_model.predict(X_class_const)[0])
     pred_label = 1 if prob_yes >= 0.5 else 0
 
-    # 5️⃣ Clustering input using cluster_feature_names
-    cluster_row = [model_row[feat] for feat in cluster_feature_names]
-    X_cluster = pd.DataFrame([cluster_row], columns=cluster_feature_names)
-    cluster_id = int(cluster_model.predict(X_cluster.values)[0])
+    # 5️⃣ Determine cluster by nearest centroid in cluster_summary
+    #    Use only features that exist both in cluster_summary and scaled_numeric_df
+    common_features = [
+        c for c in cluster_summary.columns
+        if c != cluster_label_col and c in scaled_numeric_df.columns
+    ]
 
-    # 6️⃣ Look up cluster behaviour
-    row = cluster_summary[cluster_summary[cluster_label_col] == cluster_id]
-
-    if row.empty:
-      st.error("Cluster not found in summary table.")
+    if not common_features:
+        # Fallback: assign first cluster
+        cluster_id = int(cluster_summary[cluster_label_col].iloc[0])
+        centroid_row = cluster_summary.iloc[0]
     else:
-      row = row.iloc[0]
-
-    # ---- Dynamically detect count and response rate columns ----
-    import numpy as np
-
-    idx = list(row.index)
-    count_col = None
-    rate_col = None
-
-    for c in idx:
-        cl = c.lower()
-        if cl == cluster_label_col.lower():
-            continue
-        if count_col is None and ("count" in cl or "size" in cl or "n_" in cl):
-            count_col = c
-        if rate_col is None and ("rate" in cl or "response" in cl or "yes" in cl):
-            rate_col = c
-
-    # Fallbacks if we still didn't find anything
-    if count_col is None and len(idx) > 1:
-        # pick the first non-cluster column
-        for c in idx:
-            if c != cluster_label_col:
-                count_col = c
-                break
-
-    # Try to interpret values
-    cluster_size = None
-    yes_rate = None
-
-    if count_col is not None:
-        try:
-            cluster_size = int(row[count_col])
-        except Exception:
-            cluster_size = None
-
-    if rate_col is not None:
-        try:
-            yes_rate = float(row[rate_col])
-        except Exception:
-            yes_rate = None
+        user_vec = scaled_numeric_df[common_features].iloc[0].values.astype(float)
+        centers = cluster_summary[common_features].values.astype(float)
+        dists = np.linalg.norm(centers - user_vec, axis=1)
+        best_idx = int(dists.argmin())
+        centroid_row = cluster_summary.iloc[best_idx]
+        cluster_id = int(centroid_row[cluster_label_col])
 
     # ------------ OUTPUT CARDS ------------
     st.write("---")
     col_a, col_b = st.columns(2)
 
-    # 1️⃣ Campaign response prediction (unchanged)
+    # 1️⃣ Campaign response prediction
     with col_a:
         st.subheader("📌 Campaign Response Prediction")
         if pred_label == 1:
@@ -288,36 +248,22 @@ if st.button("🔍 Analyse Customer"):
                 f"Estimated probability of response: **{prob_yes:.2f}**"
             )
 
-    # 2️⃣ Cluster info using detected columns
+    # 2️⃣ Cluster info
     with col_b:
         st.subheader("👥 Customer Segment (Cluster)")
+        st.info(
+            f"Customer belongs to **Cluster {cluster_id}**."
+        )
 
-        if cluster_size is not None:
-            st.info(
-                f"Customer belongs to **Cluster {cluster_id}** "
-                f"(Size: **{cluster_size}** records in training data)."
-            )
+        # Show brief profile for this cluster using common features
+        if common_features:
+            st.markdown("**Cluster profile (scaled features):**")
+            prof_lines = []
+            for feat in common_features:
+                prof_lines.append(f"- **{feat}** ≈ `{centroid_row[feat]:.3f}`")
+            st.markdown("\n".join(prof_lines))
         else:
-            st.info(f"Customer belongs to **Cluster {cluster_id}**.")
-
-        if yes_rate is not None:
-            if yes_rate >= 0.7:
-                st.success(
-                    f"This is a **high-response cluster** "
-                    f"(historical response rate: **{yes_rate:.2f}**)."
-                )
-            elif yes_rate <= 0.3:
-                st.error(
-                    f"This is a **low-response cluster** "
-                    f"(historical response rate: **{yes_rate:.2f}**)."
-                )
-            else:
-                st.warning(
-                    f"This is a **mixed cluster** "
-                    f"(historical response rate: **{yes_rate:.2f}**)."
-                )
-        else:
-            st.info("Response behaviour for this cluster is not available.")
+            st.info("Cluster feature profile not available with current settings.")
 
     with st.expander("📊 See all clusters and their stats"):
         st.dataframe(cluster_summary)
