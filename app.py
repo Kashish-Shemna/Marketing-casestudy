@@ -226,38 +226,81 @@ if st.button("🔍 Analyse Customer"):
     row = cluster_summary[cluster_summary[cluster_label_col] == cluster_id]
 
     if row.empty:
-        st.error("Cluster not found in summary table.")
+      st.error("Cluster not found in summary table.")
     else:
-        row = row.iloc[0]
-        cluster_size = int(row["count"])
-        yes_rate = float(row["response_yes_rate"])
+      row = row.iloc[0]
 
-        # ------------ OUTPUT CARDS ------------
-        st.write("---")
-        col_a, col_b = st.columns(2)
+    # ---- Dynamically detect count and response rate columns ----
+    import numpy as np
 
-        # 1️⃣ Will there be a response to upcoming campaign?
-        with col_a:
-            st.subheader("📌 Campaign Response Prediction")
-            if pred_label == 1:
-                st.success(
-                    f"**Will likely respond to upcoming campaign.**  \n"
-                    f"Estimated probability of response: **{prob_yes:.2f}**"
-                )
-            else:
-                st.warning(
-                    f"**Low likelihood of response to upcoming campaign.**  \n"
-                    f"Estimated probability of response: **{prob_yes:.2f}**"
-                )
+    idx = list(row.index)
+    count_col = None
+    rate_col = None
 
-        # 2️⃣ Which cluster are they in?
-        with col_b:
-            st.subheader("👥 Customer Segment (Cluster)")
-            st.info(
-                f"Customer belongs to **Cluster {cluster_id}** "
-                f"(Size: **{cluster_size}** customers)."
+    for c in idx:
+        cl = c.lower()
+        if cl == cluster_label_col.lower():
+            continue
+        if count_col is None and ("count" in cl or "size" in cl or "n_" in cl):
+            count_col = c
+        if rate_col is None and ("rate" in cl or "response" in cl or "yes" in cl):
+            rate_col = c
+
+    # Fallbacks if we still didn't find anything
+    if count_col is None and len(idx) > 1:
+        # pick the first non-cluster column
+        for c in idx:
+            if c != cluster_label_col:
+                count_col = c
+                break
+
+    # Try to interpret values
+    cluster_size = None
+    yes_rate = None
+
+    if count_col is not None:
+        try:
+            cluster_size = int(row[count_col])
+        except Exception:
+            cluster_size = None
+
+    if rate_col is not None:
+        try:
+            yes_rate = float(row[rate_col])
+        except Exception:
+            yes_rate = None
+
+    # ------------ OUTPUT CARDS ------------
+    st.write("---")
+    col_a, col_b = st.columns(2)
+
+    # 1️⃣ Campaign response prediction (unchanged)
+    with col_a:
+        st.subheader("📌 Campaign Response Prediction")
+        if pred_label == 1:
+            st.success(
+                f"**Will likely respond to upcoming campaign.**  \n"
+                f"Estimated probability of response: **{prob_yes:.2f}**"
+            )
+        else:
+            st.warning(
+                f"**Low likelihood of response to upcoming campaign.**  \n"
+                f"Estimated probability of response: **{prob_yes:.2f}**"
             )
 
+    # 2️⃣ Cluster info using detected columns
+    with col_b:
+        st.subheader("👥 Customer Segment (Cluster)")
+
+        if cluster_size is not None:
+            st.info(
+                f"Customer belongs to **Cluster {cluster_id}** "
+                f"(Size: **{cluster_size}** records in training data)."
+            )
+        else:
+            st.info(f"Customer belongs to **Cluster {cluster_id}**.")
+
+        if yes_rate is not None:
             if yes_rate >= 0.7:
                 st.success(
                     f"This is a **high-response cluster** "
@@ -273,6 +316,8 @@ if st.button("🔍 Analyse Customer"):
                     f"This is a **mixed cluster** "
                     f"(historical response rate: **{yes_rate:.2f}**)."
                 )
+        else:
+            st.info("Response behaviour for this cluster is not available.")
 
-        with st.expander("📊 See all clusters and their response behaviour"):
-            st.dataframe(cluster_summary)
+    with st.expander("📊 See all clusters and their stats"):
+        st.dataframe(cluster_summary)
