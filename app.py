@@ -32,7 +32,7 @@ cluster_summary = artifacts["cluster_summary"]         # cluster_profiles
 scaler = artifacts["scaler"]                           # min_max_scaler
 scaler_feature_names = artifacts["raw_feature_names"]  # ['Income', 'Total_Expenditure_2yrs', 'Customer tenure(days)']
 
-cluster_label_col = cluster_summary.columns[0]         # first column = cluster id
+cluster_label_col = "cluster_id"                       # first column = cluster id
 
 # ----------------- STYLING -----------------
 st.markdown(
