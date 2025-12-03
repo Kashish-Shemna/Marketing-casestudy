@@ -32,7 +32,22 @@ cluster_summary = artifacts["cluster_summary"]         # cluster_profiles
 scaler = artifacts["scaler"]                           # min_max_scaler
 scaler_feature_names = artifacts["raw_feature_names"]  # ['Income', 'Total_Expenditure_2yrs', 'Customer tenure(days)']
 
-cluster_label_col = "cluster_id"                       # first column = cluster id
+# ---- Detect which column in cluster_summary is the cluster id ----
+cols = list(cluster_summary.columns)
+label_candidates = [c for c in cols if "cluster" in c.lower()]
+
+if "cluster_id" in cols:
+    cluster_label_col = "cluster_id"
+elif label_candidates:
+    cluster_label_col = label_candidates[0]
+else:
+    # fallback: assume first column is cluster id
+    cluster_label_col = cols[0]
+
+# Optional debug: uncomment to see in the app UI
+# st.write("Cluster_summary columns:", cols)
+# st.write("Using cluster label column:", cluster_label_col)
+
 
 # ----------------- STYLING -----------------
 st.markdown(
