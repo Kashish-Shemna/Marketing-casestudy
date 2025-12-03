@@ -161,7 +161,8 @@ if st.button("🔍 Analyse Customer"):
     )
 
     # 2️⃣ Scale using saved scaler (hidden from user)
-    scaled_array = scaler.transform(raw_df)
+    #    Use .values so sklearn doesn't check DataFrame column names
+    scaled_array = scaler.transform(raw_df.values)
     scaled_df = pd.DataFrame(scaled_array, columns=raw_feature_names)
 
     # 3️⃣ Classification model input
